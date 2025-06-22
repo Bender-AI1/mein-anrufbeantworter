@@ -28,6 +28,16 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// Hilfsfunktion: Conversation-Log als Text aufbereiten
+function formatConversationLog(conv) {
+  let lines = conv.map(msg => {
+    if (msg.role === 'user') return `Kunde: ${msg.content}`;
+    if (msg.role === 'assistant') return `KI: ${msg.content}`;
+    return null;
+  }).filter(Boolean);
+  return lines.join('\n');
+}
+
 // 1. Webhook: Begrüßung & DSGVO-Hinweis, erster Gather
 app.post('/voice', (req, res) => {
   const response = new VoiceResponse();
@@ -41,7 +51,6 @@ app.post('/voice', (req, res) => {
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
-  response.play({ loop: 1 }, 'https://api.twilio.com/cowbell.mp3');
   response.gather({
     input: 'speech',
     language: 'de-DE',
@@ -49,6 +58,7 @@ app.post('/voice', (req, res) => {
     hints: 'Öffnungszeiten, Preise, Termin, Support',
     timeout: 60,
     speechTimeout: 5,
+    playBeep: true,
     confidenceThreshold: 0.1,
     action: '/gather'
   });
@@ -59,11 +69,8 @@ app.post('/voice', (req, res) => {
 // 2. Webhook: Gather-Ergebnis verarbeiten und ggf. Whisper-Fallback
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
-
-  // Guard: Abbruch, falls keine CallSid übermittelt wurde
   const callSid = req.body.CallSid;
   if (!callSid) {
-    console.error('⚠️ /gather aufgerufen ohne CallSid');
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
       'Ein interner Fehler ist aufgetreten. Auf Wiederhören!'
     );
@@ -72,25 +79,24 @@ app.post('/gather', async (req, res) => {
   }
 
   const transcript = (req.body.SpeechResult || '').trim();
-  const recordingUrl = req.body.RecordingUrl || 'keine Aufnahme-URL';
+  // Append user message
+  const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
+  convo.push({ role: 'user', content: transcript });
+  conversations[callSid] = convo;
 
-  console.log('📝 Gather SpeechResult:', transcript);
-  try {
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM,
-      to: process.env.EMAIL_TO,
-      subject: 'Neue Sprachnachricht über Anrufbeantworter',
-      text: `CallSid: ${callSid}\nAnrufer hat gesagt: ${transcript}\nAufnahme: ${recordingUrl}`
-    });
-    console.log('📧 E-Mail erfolgreich versendet');
-  } catch (err) {
-    console.error('❌ E-Mail-Versand fehlgeschlagen:', err.message);
-  }
-
-  // Auf Wiederhören? Gespräch beenden
+  // End-Catchphrase? Gespräch beenden und E-Mail senden
   if (/auf wiederhören/i.test(transcript)) {
+    // KI-Antwort
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
+    // Email with full conversation
+    const logText = formatConversationLog(convo);
+    transporter.sendMail({
+      from: process.env.SMTP_FROM,
+      to: process.env.EMAIL_TO,
+      subject: `Anrufprotokoll ${callSid}`,
+      text: logText
+    }).catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
     delete conversations[callSid];
     return res.type('text/xml').send(response.toString());
   }
@@ -110,15 +116,7 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // Sichere Konversation initialisieren, falls kein /voice vorangegangen ist
-  let convo = conversations[callSid];
-  if (!convo) {
-    convo = [{ role: 'system', content: SYSTEM_PROMPT }];
-    conversations[callSid] = convo;
-  }
-
   // Normale Konversation mit OpenRouter
-  convo.push({ role: 'user', content: transcript });
   let reply;
   try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -128,7 +126,6 @@ app.post('/gather', async (req, res) => {
     });
     const orJson = await orRes.json();
     reply = orJson.choices[0].message.content.trim();
-    console.log('🔹 OpenRouter-Antwort:', reply);
     convo.push({ role: 'assistant', content: reply });
   } catch (err) {
     console.error('❌ OpenRouter-Fehler:', err.message);
@@ -136,13 +133,13 @@ app.post('/gather', async (req, res) => {
   }
 
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
-  response.play({ loop: 1 }, 'https://api.twilio.com/cowbell.mp3');
   response.gather({
     input: 'speech',
     language: 'de-DE',
     speechModel: 'phone_call_v2',
     timeout: 60,
     speechTimeout: 5,
+    playBeep: true,
     confidenceThreshold: 0.1,
     action: '/gather'
   });
@@ -153,22 +150,19 @@ app.post('/gather', async (req, res) => {
 // 3. New Route: Whisper-Transkript & OpenRouter-Antwort
 app.post('/transcribe', async (req, res) => {
   const response = new VoiceResponse();
+  const callSid = req.body.CallSid;
+  const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
+
   let transcript = '';
   try {
-    // Aufnahme herunterladen und transkribieren
     const recordingUrl = req.body.RecordingUrl + '.mp3';
     const resp = await axios.get(recordingUrl, { responseType: 'arraybuffer' });
     const audioBuffer = Buffer.from(resp.data, 'binary');
     transcript = await openai.audio.transcriptions.create({ file: audioBuffer, model: 'whisper-1', response_format: 'text' });
-    console.log('📝 Whisper-Transkript:', transcript);
+    convo.push({ role: 'user', content: transcript });
   } catch (err) {
     console.error('❌ Whisper-Fehler:', err.message);
   }
-
-  // E-Mail mit Whisper-Transkript
-  try {
-    await transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: 'Whisper Transkript', text: transcript });
-  } catch {}
 
   // KI-Antwort generieren
   let reply = '';
@@ -176,17 +170,29 @@ app.post('/transcribe', async (req, res) => {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: transcript }] })
+      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
     });
     const orJson = await orRes.json();
     reply = orJson.choices[0].message.content.trim();
+    convo.push({ role: 'assistant', content: reply });
   } catch (err) {
+    console.error('❌ Openrouter-Fehler:', err.message);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
+  // Sende nach Whisper-Fallback das Protokoll
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
-  res.type('text/xml').send(response.toString());
+  const logText = formatConversationLog(convo);
+  transporter.sendMail({
+    from: process.env.SMTP_FROM,
+    to: process.env.EMAIL_TO,
+    subject: `Anrufprotokoll ${callSid}`,
+    text: logText
+  }).catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
+  delete conversations[callSid];
+
+  return res.type('text/xml').send(response.toString());
 });
 
 // 4. Health-Check
