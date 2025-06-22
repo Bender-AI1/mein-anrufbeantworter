@@ -4,13 +4,18 @@ const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');          // Für E-Mail-Versand
 const { twiml: { VoiceResponse } } = require('twilio');
 const fetch = require('node-fetch');                // Für OpenRouter API-Aufrufe
+const { OpenAI } = require('openai');              // Für Whisper-Transkription
+const axios = require('axios');                    // Zum Herunterladen der Aufnahme
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
 // In-Memory-Konversationen, keyed by CallSid
 const conversations = {};
-const SYSTEM_PROMPT = 'Du bist ein freundlicher Kundendienst für Mein Unternehmen. Antworte kurz und hilfreich.';
+const SYSTEM_PROMPT = 'Du bist ein freundlicher Kundendienst für Mein Unternehmen. Antworte immer auf Deutsch, kurz und hilfreich.';
+
+// OpenAI-Client für Whisper
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Nodemailer-Transporter (SMTP) konfigurieren
 const transporter = nodemailer.createTransport({
@@ -23,15 +28,12 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// 1. Webhook: Begrüßung & DSGVO-Hinweis, dann erste Gather-Anfrage
+// 1. Webhook: Begrüßung & DSGVO-Hinweis, dann erster Gather
 app.post('/voice', (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
-
-  // Initialisiere Konversation
   conversations[callSid] = [{ role: 'system', content: SYSTEM_PROMPT }];
 
-  // DSGVO-Hinweis und Prompt
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Dieses Gespräch wird aufgezeichnet und verarbeitet. Ihre Daten werden vertraulich behandelt.'
   );
@@ -39,29 +41,28 @@ app.post('/voice', (req, res) => {
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
-
-  // Gather für fortlaufende Sprachkonversation
-  const gather = response.gather({
+  response.play({ loop: 1 }, 'https://api.twilio.com/cowbell.mp3');
+  response.gather({
     input: 'speech',
+    language: 'de-DE',
+    speechModel: 'phone_call_v2',
+    hints: 'Öffnungszeiten, Preise, Termin, Support',
     timeout: 60,
-    speechTimeout: 'auto',
+    speechTimeout: 5,
+    confidenceThreshold: 0.1,
     action: '/gather'
   });
-  gather.pause({ length: 1 });
-
   res.type('text/xml').send(response.toString());
 });
 
-// 2. Webhook: Verarbeitung des Gather-Ergebnisses & loop für weitere Fragen
+// 2. Webhook: Gather-Ergebnis verarbeiten und ggf. Whisper-Fallback
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   const transcript = (req.body.SpeechResult || '').trim();
   const recordingUrl = req.body.RecordingUrl || 'keine Aufnahme-URL';
 
-  console.log('📝 Transkribierter Text:', transcript);
-
-  // E-Mail mit Transkript und Aufnahme versenden
+  console.log('📝 Gather SpeechResult:', transcript);
   try {
     await transporter.sendMail({
       from: process.env.SMTP_FROM,
@@ -74,60 +75,89 @@ app.post('/gather', async (req, res) => {
     console.error('❌ E-Mail-Versand fehlgeschlagen:', err.message);
   }
 
-  // Ende-Befehl erkennen
-  if (transcript.toLowerCase().includes('auf wiederhören')) {
-    response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
-      'Auf Wiederhören und einen schönen Tag!'
-    );
+  // Auf Wiederhören? Gespräch beenden
+  if (/auf wiederhören/i.test(transcript)) {
+    response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
     delete conversations[callSid];
     return res.type('text/xml').send(response.toString());
   }
 
-  // Fallback bei unverständlicher oder zu kurzer Sprache
+  // Fallback: Whisper-Fallback bei kurzer/unverständlicher Eingabe
   if (!transcript || transcript.split(/\s+/).length < 2) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
-      'Entschuldigung, das habe ich nicht verstanden. Bitte wiederholen Sie Ihre Frage.'
+      'Entschuldigung, das habe ich nicht verstanden. Ich nehme Ihre Nachricht nun auf. Bitte sprechen Sie nach dem Signalton.'
     );
-  } else {
-    // GPT-Konversation erweitern
-    const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
-    convo.push({ role: 'user', content: transcript });
-
-    // OpenRouter-Antwort generieren
-    let reply;
-    try {
-      const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
-        },
-        body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
-      });
-      const orJson = await orRes.json();
-      if (!orRes.ok) throw new Error(orJson.error?.message || orRes.statusText);
-      reply = orJson.choices[0].message.content.trim();
-      console.log('🔹 OpenRouter-Antwort:', reply);
-      convo.push({ role: 'assistant', content: reply });
-    } catch (err) {
-      console.error('❌ OpenRouter-Fehler:', err.message);
-      reply = 'Unsere AI ist gerade nicht erreichbar. Bitte hinterlassen Sie eine Nachricht oder versuchen Sie es später.';
-      convo.push({ role: 'assistant', content: reply });
-    }
-
-    // Antwort vorlesen
-    response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
+    response.record({
+      maxLength: 60,
+      playBeep: true,
+      trim: 'trim-silence',
+      action: '/transcribe',
+      method: 'POST'
+    });
+    return res.type('text/xml').send(response.toString());
   }
 
-  // Erneut Gather für weitere Fragen
-  const gather = response.gather({ input: 'speech', timeout: 60, speechTimeout: 'auto', action: '/gather' });
-  gather.pause({ length: 1 });
+  // Normale Konversation mit OpenRouter
+  const convo = conversations[callSid];
+  convo.push({ role: 'user', content: transcript });
+  let reply;
+  try {
+    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
+    });
+    const orJson = await orRes.json();
+    reply = orJson.choices[0].message.content.trim();
+    console.log('🔹 OpenRouter-Antwort:', reply);
+    convo.push({ role: 'assistant', content: reply });
+  } catch (err) {
+    console.error('❌ OpenRouter-Fehler:', err.message);
+    reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
+  }
 
+  response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
+  response.play({ loop: 1 }, 'https://api.twilio.com/cowbell.mp3');
+  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 5, confidenceThreshold: 0.1, action: '/gather' });
   return res.type('text/xml').send(response.toString());
 });
 
-// 3. Health-Check-Route für Monitoring und Debug
+// 3. New Route: Whisper-Transkript & OpenRouter-Antwort
+app.post('/transcribe', async (req, res) => {
+  const response = new VoiceResponse();
+  let transcript = '';
+  try {
+    // Aufnahme herunterladen und transkribieren
+    const recordingUrl = req.body.RecordingUrl + '.mp3';
+    const resp = await axios.get(recordingUrl, { responseType: 'arraybuffer' });
+    const audioBuffer = Buffer.from(resp.data, 'binary');
+    transcript = await openai.audio.transcriptions.create({ file: audioBuffer, model: 'whisper-1', response_format: 'text' });
+    console.log('📝 Whisper-Transkript:', transcript);
+  } catch (err) {
+    console.error('❌ Whisper-Fehler:', err.message);
+  }
+  // E-Mail mit Whisper-Transkript
+  try {
+    await transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: 'Whisper Transkript', text: transcript });
+  } catch {}
+  // KI-Antwort generieren
+  let reply = '';
+  try {
+    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: transcript }] })
+    });
+    const orJson = await orRes.json(); reply = orJson.choices[0].message.content.trim();
+  } catch (err) {
+    reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
+  }
+  response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
+  response.hangup();
+  res.type('text/xml').send(response.toString());
+});
+
+// 4. Health-Check
 app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
 
 // Server starten
