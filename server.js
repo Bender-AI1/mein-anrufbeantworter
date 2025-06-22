@@ -42,6 +42,7 @@ app.post('/voice', (req, res) => {
   const callSid = req.body.CallSid;
   conversations[callSid] = [{ role: 'system', content: SYSTEM_PROMPT }];
 
+  // DSGVO-Hinweis und Einführung
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Dieses Gespräch wird aufgezeichnet und verarbeitet. Ihre Daten werden vertraulich behandelt.'
   );
@@ -49,8 +50,11 @@ app.post('/voice', (req, res) => {
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
+
   // Einmaliger Piepton vor der ersten Eingabe
   response.play('https://api.twilio.com/cowbell.mp3');
+
+  // Gather mit 2s SpeechTimeout
   response.gather({
     input: 'speech',
     language: 'de-DE',
@@ -69,20 +73,22 @@ app.post('/voice', (req, res) => {
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
+
+  // Guard gegen fehlenden CallSid
   if (!callSid) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
     response.hangup();
     return res.type('text/xml').send(response.toString());
   }
 
+  // Transcript hinzufügen
   const transcript = (req.body.SpeechResult || '').trim();
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
   convo.push({ role: 'user', content: transcript });
   conversations[callSid] = convo;
-
   console.log('📝 Gather SpeechResult:', transcript);
 
-  // End-Catchphrase? Gespräch beenden und E-Mail versenden
+  // Auf Wiederhören -> Abschluss
   if (/auf wiederhören/i.test(transcript)) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
@@ -97,7 +103,7 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // Fallback: Whisper-Fallback bei kurzer/unverständlicher Eingabe
+  // Fallback bei Kurznachricht
   if (!transcript || transcript.split(/\s+/).length < 2) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
       'Entschuldigung, das habe ich nicht verstanden. Ich nehme Ihre Nachricht nun auf. Bitte sprechen Sie nach dem Signalton.'
@@ -106,7 +112,7 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // KI-Antwort generieren
+  // AI-Antwort generieren
   let reply;
   try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -123,8 +129,8 @@ app.post('/gather', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
+  // Antwort vorlesen und nächsten Gather starten
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
-  // Piepton vor der nächsten Eingabe
   response.play('https://api.twilio.com/cowbell.mp3');
   response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
   return res.type('text/xml').send(response.toString());
@@ -163,6 +169,7 @@ app.post('/transcribe', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
+  // Finale Antwort + Email-Protokoll
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
   const logText = formatConversationLog(convo);
