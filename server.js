@@ -7,7 +7,6 @@ const fetch = require('node-fetch');                // Für OpenRouter API-Aufru
 const { OpenAI } = require('openai');              // Für Whisper-Transkription
 const axios = require('axios');                    // Zum Herunterladen der Aufnahme
 
-console.log('🔄 server.js loaded and running');
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
@@ -29,7 +28,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// 1. Webhook: Begrüßung & DSGVO-Hinweis, dann erster Gather
+// 1. Webhook: Begrüßung & DSGVO-Hinweis, erster Gather
 app.post('/voice', (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
@@ -53,6 +52,7 @@ app.post('/voice', (req, res) => {
     confidenceThreshold: 0.1,
     action: '/gather'
   });
+
   res.type('text/xml').send(response.toString());
 });
 
@@ -99,8 +99,14 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
+  // Sichere Konversation initialisieren, falls kein /voice vorangegangen ist
+  let convo = conversations[callSid];
+  if (!convo) {
+    convo = [{ role: 'system', content: SYSTEM_PROMPT }];
+    conversations[callSid] = convo;
+  }
+
   // Normale Konversation mit OpenRouter
-  const convo = conversations[callSid];
   convo.push({ role: 'user', content: transcript });
   let reply;
   try {
@@ -120,7 +126,16 @@ app.post('/gather', async (req, res) => {
 
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.play({ loop: 1 }, 'https://api.twilio.com/cowbell.mp3');
-  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 5, confidenceThreshold: 0.1, action: '/gather' });
+  response.gather({
+    input: 'speech',
+    language: 'de-DE',
+    speechModel: 'phone_call_v2',
+    timeout: 60,
+    speechTimeout: 5,
+    confidenceThreshold: 0.1,
+    action: '/gather'
+  });
+
   return res.type('text/xml').send(response.toString());
 });
 
@@ -138,21 +153,26 @@ app.post('/transcribe', async (req, res) => {
   } catch (err) {
     console.error('❌ Whisper-Fehler:', err.message);
   }
+
   // E-Mail mit Whisper-Transkript
   try {
     await transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: 'Whisper Transkript', text: transcript });
   } catch {}
+
   // KI-Antwort generieren
   let reply = '';
   try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
       body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: transcript }] })
     });
-    const orJson = await orRes.json(); reply = orJson.choices[0].message.content.trim();
+    const orJson = await orRes.json();
+    reply = orJson.choices[0].message.content.trim();
   } catch (err) {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
+
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
   res.type('text/xml').send(response.toString());
