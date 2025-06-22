@@ -7,6 +7,7 @@ const fetch = require('node-fetch');                // Für OpenRouter API-Aufru
 const { OpenAI } = require('openai');              // Für Whisper-Transkription
 const axios = require('axios');                    // Zum Herunterladen der Aufnahme
 
+console.log('🔄 server.js loaded and running');
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
