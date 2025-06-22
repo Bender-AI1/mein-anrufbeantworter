@@ -49,7 +49,8 @@ app.post('/voice', (req, res) => {
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
-  // Standard Piepton und 2 Sekunden Stille für SpeechTimeout
+  // Einmaliger Piepton vor der ersten Eingabe
+  response.play('https://api.twilio.com/cowbell.mp3');
   response.gather({
     input: 'speech',
     language: 'de-DE',
@@ -57,7 +58,6 @@ app.post('/voice', (req, res) => {
     hints: 'Öffnungszeiten, Preise, Termin, Support',
     timeout: 60,
     speechTimeout: 2,
-    playBeep: true,
     confidenceThreshold: 0.1,
     action: '/gather'
   });
@@ -70,26 +70,22 @@ app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   if (!callSid) {
-    response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
-      'Ein interner Fehler ist aufgetreten. Auf Wiederhören!'
-    );
+    response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
     response.hangup();
     return res.type('text/xml').send(response.toString());
   }
 
   const transcript = (req.body.SpeechResult || '').trim();
-  // Append user message
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
   convo.push({ role: 'user', content: transcript });
   conversations[callSid] = convo;
 
   console.log('📝 Gather SpeechResult:', transcript);
 
-  // Check for hangup keyword
+  // End-Catchphrase? Gespräch beenden und E-Mail versenden
   if (/auf wiederhören/i.test(transcript)) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
-    // Send one email with full log
     const logText = formatConversationLog(convo);
     transporter.sendMail({
       from: process.env.SMTP_FROM,
@@ -106,17 +102,11 @@ app.post('/gather', async (req, res) => {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
       'Entschuldigung, das habe ich nicht verstanden. Ich nehme Ihre Nachricht nun auf. Bitte sprechen Sie nach dem Signalton.'
     );
-    response.record({
-      maxLength: 60,
-      playBeep: true,
-      trim: 'trim-silence',
-      action: '/transcribe',
-      method: 'POST'
-    });
+    response.record({ maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe', method: 'POST' });
     return res.type('text/xml').send(response.toString());
   }
 
-  // Generate AI reply
+  // KI-Antwort generieren
   let reply;
   try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -134,18 +124,9 @@ app.post('/gather', async (req, res) => {
   }
 
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
-  // Next gather with single beep
-  response.gather({
-    input: 'speech',
-    language: 'de-DE',
-    speechModel: 'phone_call_v2',
-    timeout: 60,
-    speechTimeout: 2,
-    playBeep: true,
-    confidenceThreshold: 0.1,
-    action: '/gather'
-  });
-
+  // Piepton vor der nächsten Eingabe
+  response.play('https://api.twilio.com/cowbell.mp3');
+  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
   return res.type('text/xml').send(response.toString());
 });
 
@@ -182,18 +163,12 @@ app.post('/transcribe', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  // End call and send conversation log
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
   const logText = formatConversationLog(convo);
-  transporter.sendMail({
-    from: process.env.SMTP_FROM,
-    to: process.env.EMAIL_TO,
-    subject: `Anrufprotokoll ${callSid}`,
-    text: logText
-  }).catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
+  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: logText })
+    .catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
   delete conversations[callSid];
-
   return res.type('text/xml').send(response.toString());
 });
 
