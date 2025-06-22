@@ -10,7 +10,7 @@ const axios = require('axios');                    // Zum Herunterladen der Aufn
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Statischer Zugriff auf assets/ (falls eigene MP3 später verwendet wird)
+// Statischer Zugriff auf assets/ (Signalton MP3)
 app.use('/assets', express.static('assets'));
 
 // In-Memory-Konversationen, keyed by CallSid
@@ -54,10 +54,10 @@ app.post('/voice', (req, res) => {
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
 
-  // Einmaliger Piepton (alte Cowbell)
-  response.play('https://api.twilio.com/cowbell.mp3');
+  // Einmaliger Piepton (eigene MP3)
+  response.play('/assets/beep-125033.mp3');
 
-  // Gather mit 2s SpeechTimeout und Standard-Beep
+  // Gather mit 2s SpeechTimeout (ohne erneuten Piepton)
   response.gather({
     input: 'speech',
     language: 'de-DE',
@@ -65,7 +65,6 @@ app.post('/voice', (req, res) => {
     hints: 'Öffnungszeiten, Preise, Termin, Support',
     timeout: 60,
     speechTimeout: 2,
-    playBeep: true,
     confidenceThreshold: 0.1,
     action: '/gather'
   });
@@ -77,19 +76,17 @@ app.post('/voice', (req, res) => {
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
-
   if (!callSid) {
-    // Guard gegen fehlenden CallSid
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
     response.hangup();
     return res.type('text/xml').send(response.toString());
   }
 
-  // Transcript hinzufügen
   const transcript = (req.body.SpeechResult || '').trim();
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
   convo.push({ role: 'user', content: transcript });
   conversations[callSid] = convo;
+
   console.log('📝 Gather SpeechResult:', transcript);
 
   // Auf Wiederhören -> Abschluss und Protokoll-Mail
@@ -122,9 +119,10 @@ app.post('/gather', async (req, res) => {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
+      body: JSON.stringify({ model: 'openrouter/auto', messages: convo })
     });
     const orJson = await orRes.json();
+    if (!orRes.ok || !Array.isArray(orJson.choices)) throw new Error(orJson.error?.message || orRes.statusText);
     reply = orJson.choices[0].message.content.trim();
     convo.push({ role: 'assistant', content: reply });
     console.log('🔹 OpenRouter-Antwort:', reply);
@@ -133,9 +131,9 @@ app.post('/gather', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  // Antwort vorlesen und nächsten Gather starten (nur Standard-Beep)
+  // Antwort vorlesen und nächsten Gather (ohne Piepton)
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
-  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, playBeep: true, confidenceThreshold: 0.1, action: '/gather' });
+  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
   return res.type('text/xml').send(response.toString());
 });
 
@@ -162,9 +160,10 @@ app.post('/transcribe', async (req, res) => {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
+      body: JSON.stringify({ model: 'openrouter/auto', messages: convo })
     });
     const orJson = await orRes.json();
+    if (!orRes.ok || !Array.isArray(orJson.choices)) throw new Error(orJson.error?.message || orRes.statusText);
     reply = orJson.choices[0].message.content.trim();
     convo.push({ role: 'assistant', content: reply });
   } catch (err) {
@@ -183,10 +182,7 @@ app.post('/transcribe', async (req, res) => {
   return res.type('text/xml').send(response.toString());
 });
 
-// 4. Health-Check
-// 4. Health-Check
+// 4. Health-Check & Serverstart
 app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
-
-// Server starten
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`📞 Server läuft auf Port ${PORT}`));
