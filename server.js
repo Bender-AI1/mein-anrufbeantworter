@@ -10,6 +10,9 @@ const axios = require('axios');                    // Zum Herunterladen der Aufn
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
+// Statischer Zugriff auf assets/ (falls eigene MP3 später verwendet wird)
+app.use('/assets', express.static('assets'));
+
 // In-Memory-Konversationen, keyed by CallSid
 const conversations = {};
 const SYSTEM_PROMPT = 'Du bist ein freundlicher Kundendienst für Mein Unternehmen. Antworte immer auf Deutsch, kurz und hilfreich.';
@@ -36,7 +39,7 @@ function formatConversationLog(conv) {
     .join('\n');
 }
 
-// 1. Webhook: Begrüßung & DSGVO-Hinweis, erster Gather
+// 1. Webhook: Begrüßung & DSGVO-Hinweis, erster Gather mit einmaligem Piepton
 app.post('/voice', (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
@@ -51,10 +54,10 @@ app.post('/voice', (req, res) => {
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
 
-  // Einmaliger Piepton vor der ersten Eingabe
+  // Einmaliger Piepton (alte Cowbell)
   response.play('https://api.twilio.com/cowbell.mp3');
 
-  // Gather mit 2s SpeechTimeout
+  // Gather mit 2s SpeechTimeout und Standard-Beep
   response.gather({
     input: 'speech',
     language: 'de-DE',
@@ -62,6 +65,7 @@ app.post('/voice', (req, res) => {
     hints: 'Öffnungszeiten, Preise, Termin, Support',
     timeout: 60,
     speechTimeout: 2,
+    playBeep: true,
     confidenceThreshold: 0.1,
     action: '/gather'
   });
@@ -74,8 +78,8 @@ app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
 
-  // Guard gegen fehlenden CallSid
   if (!callSid) {
+    // Guard gegen fehlenden CallSid
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
     response.hangup();
     return res.type('text/xml').send(response.toString());
@@ -88,7 +92,7 @@ app.post('/gather', async (req, res) => {
   conversations[callSid] = convo;
   console.log('📝 Gather SpeechResult:', transcript);
 
-  // Auf Wiederhören -> Abschluss
+  // Auf Wiederhören -> Abschluss und Protokoll-Mail
   if (/auf wiederhören/i.test(transcript)) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
@@ -112,7 +116,7 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // AI-Antwort generieren
+  // KI-Antwort generieren
   let reply;
   try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -129,10 +133,9 @@ app.post('/gather', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  // Antwort vorlesen und nächsten Gather starten
+  // Antwort vorlesen und nächsten Gather starten (nur Standard-Beep)
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
-  response.play('https://api.twilio.com/cowbell.mp3');
-  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
+  response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, playBeep: true, confidenceThreshold: 0.1, action: '/gather' });
   return res.type('text/xml').send(response.toString());
 });
 
@@ -169,19 +172,16 @@ app.post('/transcribe', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  // Finale Antwort + Email-Protokoll
+  // Finale Antwort + E-Mail-Protokoll
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
   const logText = formatConversationLog(convo);
   transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: logText })
     .catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
   delete conversations[callSid];
+
   return res.type('text/xml').send(response.toString());
 });
 
 // 4. Health-Check
-app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
-
-// Server starten
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`📞 Server läuft auf Port ${PORT}`));
+app.get('/status', (req, res) => res.send('✅ Anrufbe
