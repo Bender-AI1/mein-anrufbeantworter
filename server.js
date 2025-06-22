@@ -30,12 +30,10 @@ const transporter = nodemailer.createTransport({
 
 // Hilfsfunktion: Conversation-Log als Text aufbereiten
 function formatConversationLog(conv) {
-  let lines = conv.map(msg => {
-    if (msg.role === 'user') return `Kunde: ${msg.content}`;
-    if (msg.role === 'assistant') return `KI: ${msg.content}`;
-    return null;
-  }).filter(Boolean);
-  return lines.join('\n');
+  return conv
+    .filter(msg => msg.role !== 'system')
+    .map(msg => (msg.role === 'user' ? `Kunde: ${msg.content}` : `KI: ${msg.content}`))
+    .join('\n');
 }
 
 // 1. Webhook: Begrüßung & DSGVO-Hinweis, erster Gather
@@ -51,13 +49,14 @@ app.post('/voice', (req, res) => {
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
+  // Standard Piepton und 2 Sekunden Stille für SpeechTimeout
   response.gather({
     input: 'speech',
     language: 'de-DE',
     speechModel: 'phone_call_v2',
     hints: 'Öffnungszeiten, Preise, Termin, Support',
     timeout: 60,
-    speechTimeout: 5,
+    speechTimeout: 2,
     playBeep: true,
     confidenceThreshold: 0.1,
     action: '/gather'
@@ -84,12 +83,13 @@ app.post('/gather', async (req, res) => {
   convo.push({ role: 'user', content: transcript });
   conversations[callSid] = convo;
 
-  // End-Catchphrase? Gespräch beenden und E-Mail senden
+  console.log('📝 Gather SpeechResult:', transcript);
+
+  // Check for hangup keyword
   if (/auf wiederhören/i.test(transcript)) {
-    // KI-Antwort
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
-    // Email with full conversation
+    // Send one email with full log
     const logText = formatConversationLog(convo);
     transporter.sendMail({
       from: process.env.SMTP_FROM,
@@ -116,8 +116,58 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // Normale Konversation mit OpenRouter
+  // Generate AI reply
   let reply;
+  try {
+    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
+    });
+    const orJson = await orRes.json();
+    reply = orJson.choices[0].message.content.trim();
+    convo.push({ role: 'assistant', content: reply });
+    console.log('🔹 OpenRouter-Antwort:', reply);
+  } catch (err) {
+    console.error('❌ OpenRouter-Fehler:', err.message);
+    reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
+  }
+
+  response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
+  // Next gather with single beep
+  response.gather({
+    input: 'speech',
+    language: 'de-DE',
+    speechModel: 'phone_call_v2',
+    timeout: 60,
+    speechTimeout: 2,
+    playBeep: true,
+    confidenceThreshold: 0.1,
+    action: '/gather'
+  });
+
+  return res.type('text/xml').send(response.toString());
+});
+
+// 3. Whisper-Transkript & OpenRouter-Antwort
+app.post('/transcribe', async (req, res) => {
+  const response = new VoiceResponse();
+  const callSid = req.body.CallSid;
+  const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
+
+  let transcript = '';
+  try {
+    const recordingUrl = req.body.RecordingUrl + '.mp3';
+    const resp = await axios.get(recordingUrl, { responseType: 'arraybuffer' });
+    const audioBuffer = Buffer.from(resp.data, 'binary');
+    transcript = await openai.audio.transcriptions.create({ file: audioBuffer, model: 'whisper-1', response_format: 'text' });
+    convo.push({ role: 'user', content: transcript });
+    console.log('📝 Whisper-Transkript:', transcript);
+  } catch (err) {
+    console.error('❌ Whisper-Fehler:', err.message);
+  }
+
+  let reply = '';
   try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -132,55 +182,7 @@ app.post('/gather', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
-  response.gather({
-    input: 'speech',
-    language: 'de-DE',
-    speechModel: 'phone_call_v2',
-    timeout: 60,
-    speechTimeout: 5,
-    playBeep: true,
-    confidenceThreshold: 0.1,
-    action: '/gather'
-  });
-
-  return res.type('text/xml').send(response.toString());
-});
-
-// 3. New Route: Whisper-Transkript & OpenRouter-Antwort
-app.post('/transcribe', async (req, res) => {
-  const response = new VoiceResponse();
-  const callSid = req.body.CallSid;
-  const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
-
-  let transcript = '';
-  try {
-    const recordingUrl = req.body.RecordingUrl + '.mp3';
-    const resp = await axios.get(recordingUrl, { responseType: 'arraybuffer' });
-    const audioBuffer = Buffer.from(resp.data, 'binary');
-    transcript = await openai.audio.transcriptions.create({ file: audioBuffer, model: 'whisper-1', response_format: 'text' });
-    convo.push({ role: 'user', content: transcript });
-  } catch (err) {
-    console.error('❌ Whisper-Fehler:', err.message);
-  }
-
-  // KI-Antwort generieren
-  let reply = '';
-  try {
-    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      body: JSON.stringify({ model: 'mistralai/mistral-small-3.2-24b-instruct:free', messages: convo })
-    });
-    const orJson = await orRes.json();
-    reply = orJson.choices[0].message.content.trim();
-    convo.push({ role: 'assistant', content: reply });
-  } catch (err) {
-    console.error('❌ Openrouter-Fehler:', err.message);
-    reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
-  }
-
-  // Sende nach Whisper-Fallback das Protokoll
+  // End call and send conversation log
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
   const logText = formatConversationLog(convo);
