@@ -1,0 +1,18 @@
+# Umgebungsvariablen
+.env
+
+# Node-Modules (Abhängigkeiten)
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# VSCode-Einstellungen
+.vscode/
+.idea/
+
+# System-Dateien
+.DS_Store
+Thumbs.db
