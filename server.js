@@ -184,4 +184,9 @@ app.post('/transcribe', async (req, res) => {
 });
 
 // 4. Health-Check
-app.get('/status', (req, res) => res.send('✅ Anrufbe
+// 4. Health-Check
+app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
+
+// Server starten
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`📞 Server läuft auf Port ${PORT}`));
