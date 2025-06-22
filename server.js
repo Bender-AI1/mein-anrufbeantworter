@@ -59,7 +59,18 @@ app.post('/voice', (req, res) => {
 // 2. Webhook: Gather-Ergebnis verarbeiten und ggf. Whisper-Fallback
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
+
+  // Guard: Abbruch, falls keine CallSid übermittelt wurde
   const callSid = req.body.CallSid;
+  if (!callSid) {
+    console.error('⚠️ /gather aufgerufen ohne CallSid');
+    response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
+      'Ein interner Fehler ist aufgetreten. Auf Wiederhören!'
+    );
+    response.hangup();
+    return res.type('text/xml').send(response.toString());
+  }
+
   const transcript = (req.body.SpeechResult || '').trim();
   const recordingUrl = req.body.RecordingUrl || 'keine Aufnahme-URL';
 
