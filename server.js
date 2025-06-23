@@ -16,11 +16,6 @@ app.use('/assets', express.static('assets'));
 const conversations = {};
 const SYSTEM_PROMPT = 'Du bist ein freundlicher Kundendienst für Mein Unternehmen. Antworte immer auf Deutsch, kurz und hilfreich.';
 
-// Token-Tracking für Budget-Warnung
-let usedTokens = 0;
-const TOKEN_BUDGET = Number(process.env.TOKEN_BUDGET);
-const TOKEN_THRESHOLD = Number(process.env.TOKEN_THRESHOLD);
-
 // OpenAI-Client (Whisper + GPT-3.5-turbo)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -39,21 +34,8 @@ const transporter = nodemailer.createTransport({
 function formatConversationLog(conv) {
   return conv
     .filter(msg => msg.role !== 'system')
-    .map(msg => (msg.role === 'user' ? `Kunde: ${msg.content}` : `KI: ${msg.content}`))
+    .map(msg => (msg.role === 'user' ? Kunde: ${msg.content} : KI: ${msg.content}))
     .join('\n');
-}
-
-// Warn-Mail senden, wenn unter Schwellwert
-function checkTokenBudget() {
-  const remaining = TOKEN_BUDGET - usedTokens;
-  if (remaining <= TOKEN_THRESHOLD) {
-    transporter.sendMail({
-      from: process.env.SMTP_FROM,
-      to: process.env.EMAIL_TO,
-      subject: '⚠️ Niedriges Token-Guthaben',
-      text: `Token-Guthaben niedrig: verbleibend ${remaining} Tokens von ${TOKEN_BUDGET}`
-    }).catch(err => console.error('❌ Warn-Mail fehlgeschlagen:', err.message));
-  }
 }
 
 // 1. Webhook: Begrüßung & DSGVO-Hinweis, erster Gather mit einmaligem Piepton
@@ -113,7 +95,7 @@ app.post('/gather', async (req, res) => {
     transporter.sendMail({
       from: process.env.SMTP_FROM,
       to: process.env.EMAIL_TO,
-      subject: `Anrufprotokoll ${callSid}`,
+      subject: Anrufprotokoll ${callSid},
       text: logText
     }).catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
     delete conversations[callSid];
@@ -139,9 +121,7 @@ app.post('/gather', async (req, res) => {
     });
     reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
-    usedTokens += chatRes.usage.total_tokens;
-    checkTokenBudget();
-    console.log('🔹 GPT-Antwort:', reply, `(+${chatRes.usage.total_tokens} tokens)`);
+    console.log('🔹 GPT-Antwort:', reply);
   } catch (err) {
     console.error('❌ GPT-Fehler:', err.message);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
@@ -158,6 +138,7 @@ app.post('/transcribe', async (req, res) => {
   const callSid = req.body.CallSid;
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
 
+  // Whisper-Transkription
   let transcript = '';
   try {
     const recordingUrl = req.body.RecordingUrl + '.mp3';
@@ -170,6 +151,7 @@ app.post('/transcribe', async (req, res) => {
     console.error('❌ Whisper-Fehler:', err.message);
   }
 
+  // GPT-3.5-turbo Chat-Antwort
   let reply = '';
   try {
     const chatRes = await openai.chat.completions.create({
@@ -179,8 +161,6 @@ app.post('/transcribe', async (req, res) => {
     });
     reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
-    usedTokens += chatRes.usage.total_tokens;
-    checkTokenBudget();
   } catch (err) {
     console.error('❌ GPT-Fehler:', err.message);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
@@ -188,8 +168,8 @@ app.post('/transcribe', async (req, res) => {
 
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
-  const logText = formatConversationLog(convo);
-  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: logText })
+  const logText = formatConversationLog(convon);
+  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: Anrufprotokoll ${callSid}, text: logText })
     .catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
   delete conversations[callSid];
 
@@ -199,4 +179,4 @@ app.post('/transcribe', async (req, res) => {
 // 4. Health-Check & Serverstart
 app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`📞 Server läuft auf Port ${PORT}`));
+app.listen(PORT, () => console.log(📞 Server läuft auf Port ${PORT}));
