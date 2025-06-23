@@ -3,8 +3,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');          // Für E-Mail-Versand
 const { twiml: { VoiceResponse } } = require('twilio');
-const fetch = require('node-fetch');                // Für OpenRouter API-Aufrufe
-const { OpenAI } = require('openai');              // Für Whisper-Transkription
+const { OpenAI } = require('openai');              // Für Whisper-Transkription und Chat
 const axios = require('axios');                    // Zum Herunterladen der Aufnahme
 
 const app = express();
@@ -17,7 +16,7 @@ app.use('/assets', express.static('assets'));
 const conversations = {};
 const SYSTEM_PROMPT = 'Du bist ein freundlicher Kundendienst für Mein Unternehmen. Antworte immer auf Deutsch, kurz und hilfreich.';
 
-// OpenAI-Client für Whisper
+// OpenAI-Client (Whisper + GPT-3.5-turbo)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Nodemailer-Transporter (SMTP) konfigurieren
@@ -45,7 +44,6 @@ app.post('/voice', (req, res) => {
   const callSid = req.body.CallSid;
   conversations[callSid] = [{ role: 'system', content: SYSTEM_PROMPT }];
 
-  // DSGVO-Hinweis und Einführung
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Dieses Gespräch wird aufgezeichnet und verarbeitet. Ihre Daten werden vertraulich behandelt.'
   );
@@ -72,7 +70,7 @@ app.post('/voice', (req, res) => {
   res.type('text/xml').send(response.toString());
 });
 
-// 2. Webhook: Gather-Ergebnis verarbeiten und ggf. Whisper-Fallback
+// 2. Webhook: Gather-Ergebnis verarbeiten und ggf. Whisper-Fallback / GPT-3.5-chat
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
@@ -104,7 +102,7 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // Fallback bei Kurznachricht
+  // Fallback bei Kurznachricht => Aufnahme & /transcribe
   if (!transcript || transcript.split(/\s+/).length < 2) {
     response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
       'Entschuldigung, das habe ich nicht verstanden. Ich nehme Ihre Nachricht nun auf. Bitte sprechen Sie nach dem Signalton.'
@@ -113,36 +111,34 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // KI-Antwort generieren
+  // GPT-3.5-turbo Chat-Antwort
   let reply;
   try {
-    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      body: JSON.stringify({ model: 'openrouter/auto', messages: convo })
+    const chatRes = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: convo,
+      max_tokens: 500
     });
-    const orJson = await orRes.json();
-    if (!orRes.ok || !Array.isArray(orJson.choices)) throw new Error(orJson.error?.message || orRes.statusText);
-    reply = orJson.choices[0].message.content.trim();
+    reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
-    console.log('🔹 OpenRouter-Antwort:', reply);
+    console.log('🔹 GPT-Antwort:', reply);
   } catch (err) {
-    console.error('❌ OpenRouter-Fehler:', err.message);
+    console.error('❌ GPT-Fehler:', err.message);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  // Antwort vorlesen und nächsten Gather (ohne Piepton)
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
   return res.type('text/xml').send(response.toString());
 });
 
-// 3. Whisper-Transkript & OpenRouter-Antwort
+// 3. Whisper-Transkript & GPT-3.5-Antwort
 app.post('/transcribe', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
 
+  // Whisper-Transkription
   let transcript = '';
   try {
     const recordingUrl = req.body.RecordingUrl + '.mp3';
@@ -155,26 +151,24 @@ app.post('/transcribe', async (req, res) => {
     console.error('❌ Whisper-Fehler:', err.message);
   }
 
+  // GPT-3.5-turbo Chat-Antwort
   let reply = '';
   try {
-    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      body: JSON.stringify({ model: 'openrouter/auto', messages: convo })
+    const chatRes = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: convo,
+      max_tokens: 500
     });
-    const orJson = await orRes.json();
-    if (!orRes.ok || !Array.isArray(orJson.choices)) throw new Error(orJson.error?.message || orRes.statusText);
-    reply = orJson.choices[0].message.content.trim();
+    reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
   } catch (err) {
-    console.error('❌ OpenRouter-Fehler:', err.message);
+    console.error('❌ GPT-Fehler:', err.message);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  // Finale Antwort + E-Mail-Protokoll
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
-  const logText = formatConversationLog(convo);
+  const logText = formatConversationLog(convon);
   transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: logText })
     .catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
   delete conversations[callSid];
