@@ -34,7 +34,7 @@ const transporter = nodemailer.createTransport({
 function formatConversationLog(conv) {
   return conv
     .filter(msg => msg.role !== 'system')
-    .map(msg => (msg.role === 'user' ? Kunde: ${msg.content} : KI: ${msg.content}))
+    .map(msg => (msg.role === 'user' ? `Kunde: ${msg.content}` : `KI: ${msg.content}`))
     .join('\n');
 }
 
@@ -95,7 +95,7 @@ app.post('/gather', async (req, res) => {
     transporter.sendMail({
       from: process.env.SMTP_FROM,
       to: process.env.EMAIL_TO,
-      subject: Anrufprotokoll ${callSid},
+      subject: `Anrufprotokoll ${callSid}`,
       text: logText
     }).catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
     delete conversations[callSid];
@@ -138,7 +138,6 @@ app.post('/transcribe', async (req, res) => {
   const callSid = req.body.CallSid;
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
 
-  // Whisper-Transkription
   let transcript = '';
   try {
     const recordingUrl = req.body.RecordingUrl + '.mp3';
@@ -151,7 +150,6 @@ app.post('/transcribe', async (req, res) => {
     console.error('❌ Whisper-Fehler:', err.message);
   }
 
-  // GPT-3.5-turbo Chat-Antwort
   let reply = '';
   try {
     const chatRes = await openai.chat.completions.create({
@@ -168,8 +166,8 @@ app.post('/transcribe', async (req, res) => {
 
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
-  const logText = formatConversationLog(convon);
-  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: Anrufprotokoll ${callSid}, text: logText })
+  const logText = formatConversationLog(convo);
+  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: logText })
     .catch(err => console.error('❌ E-Mail-Protokoll fehlgeschlagen:', err.message));
   delete conversations[callSid];
 
@@ -179,4 +177,4 @@ app.post('/transcribe', async (req, res) => {
 // 4. Health-Check & Serverstart
 app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(📞 Server läuft auf Port ${PORT}));
+app.listen(PORT, () => console.log(`📞 Server läuft auf Port ${PORT}`));
