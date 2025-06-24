@@ -28,8 +28,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// Hilfsfunktion: Gesprächsprotokoll als Text
-function formatConversationLog(conv) {
+// Hilfsfunktion: Gesprächsprotokoll als Textunction formatConversationLog(conv) {
   return conv
     .filter(msg => msg.role !== 'system')
     .map(msg => msg.role === 'user' ? `Kunde: ${msg.content}` : `KI: ${msg.content}`)
@@ -72,9 +71,14 @@ app.post('/voice', (req, res) => {
 
   // Gather
   response.gather({
-    input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2',
-    hints: 'Öffnungszeiten, Preise, Termin, Support', timeout: 60, speechTimeout: 2,
-    confidenceThreshold: 0.1, action: '/gather'
+    input: 'speech',
+    language: 'de-DE',
+    speechModel: 'phone_call_v2',
+    hints: 'Öffnungszeiten, Preise, Termin, Support',
+    timeout: 60,
+    speechTimeout: 2,
+    confidenceThreshold: 0.1,
+    action: '/gather'
   });
 
   res.type('text/xml').send(response.toString());
@@ -85,7 +89,8 @@ app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   if (!callSid) {
-    response.say('Ein interner Fehler ist aufgetreten. Auf Wiederhören!').hangup();
+    response.say('Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
+    response.hangup();
     return res.type('text/xml').send(response.toString());
   }
 
@@ -93,17 +98,33 @@ app.post('/gather', async (req, res) => {
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
   convo.push({ role: 'user', content: transcript });
 
-  // Themen-Tag
-  const topic = await getTopicFromGPT(transcript);
+  // Schritt 5: Thema per GPT erkennen und taggen
+  let topic = 'Allgemeine Anfrage';
+  try {
+    const tagRes = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: 'Ordne diese Anfrage einer Kategorie zu: Support, Reklamation, Verkauf oder Allgemeine Anfrage.' },
+        { role: 'user',   content: transcript }
+      ],
+      max_tokens: 10,
+      temperature: 0
+    });
+    topic = tagRes.choices[0].message.content.trim();
+  } catch (err) {
+    console.error('❌ Themen-Tagging fehlgeschlagen:', err.message);
+  }
   convo.push({ role: 'system', content: `Thema: ${topic}` });
+  console.log(`🏷️ Thema erkannt: ${topic}`);
 
   // Auf Wiederhören → Protokoll senden
   if (/auf wiederhören/i.test(transcript)) {
-    response.say('Auf Wiederhören und einen schönen Tag!').hangup();
+    response.say('Auf Wiederhören und einen schönen Tag!');
+    response.hangup();
     transporter.sendMail({
       from: process.env.SMTP_FROM,
       to: process.env.EMAIL_TO,
-      subject: `Anrufprotokoll ${callSid}`,
+      subject: `Anrufprotokoll ${callSid} – Thema: ${topic}`,
       text: formatConversationLog(convo)
     }).catch(console.error);
     delete conversations[callSid];
@@ -111,10 +132,9 @@ app.post('/gather', async (req, res) => {
   }
 
   // Fallback bei kurzer Eingabe → /transcribe
-  if (!transcript || transcript.split(/\s+/).length < 2) {
-    response.say('Entschuldigung, ich habe Sie nicht verstanden. Ich nehme Ihre Nachricht nun auf.').record({
-      maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe'
-    });
+  if (!transcript || transcript.split(/\\s+/).length < 2) {
+    response.say('Entschuldigung, ich habe Sie nicht verstanden. Ich nehme Ihre Nachricht nun auf.');
+    response.record({ maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe' });
     return res.type('text/xml').send(response.toString());
   }
 
@@ -131,10 +151,17 @@ app.post('/gather', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar.';
   }
 
-  response.say(reply).gather({
-    input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2',
-    timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather'
+  response.say(reply);
+  response.gather({
+    input: 'speech',
+    language: 'de-DE',
+    speechModel: 'phone_call_v2',
+    timeout: 60,
+    speechTimeout: 2,
+    confidenceThreshold: 0.1,
+    action: '/gather'
   });
+
   res.type('text/xml').send(response.toString());
 });
 
@@ -158,21 +185,4 @@ app.post('/transcribe', async (req, res) => {
   // GPT-Chat-Antwort
   let reply = '';
   try {
-    const chatRes = await openai.chat.completions.create({ model: 'gpt-3.5-turbo', messages: convo, max_tokens: 500 });
-    reply = chatRes.choices[0].message.content;
-    convo.push({ role: 'assistant', content: reply });
-  } catch (err) {
-    console.error('❌ GPT-Fehler:', err.message);
-    reply = 'Unsere KI ist gerade nicht erreichbar.';
-  }
-
-  response.say(reply).hangup();
-  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: formatConversationLog(convo) }).catch(console.error);
-  delete conversations[callSid];
-
-  res.type('text/xml').send(response.toString());
-});
-
-// 4. /status
-app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
-app.listen(process.env.PORT || 5000, () => console.log('📞 Server läuft auf Port', process.env.PORT || 5000));
+    const chatRes = await openai.chat.completions.create({ model: 'gpt-3.5-turbo', messages: convo, max_tokens
