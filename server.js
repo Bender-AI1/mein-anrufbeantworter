@@ -1,10 +1,10 @@
 require('dotenv').config();                    // Lädt Umgebungsvariablen
 const express = require('express');
 const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');      // Für E-Mail-Versand
+const nodemailer = require('nodemailer');          // Für E-Mail-Versand
 const { twiml: { VoiceResponse } } = require('twilio');
-const { OpenAI } = require('openai');          // Für Whisper-Transkription und Chat
-const axios = require('axios');                // Zum Herunterladen der Aufnahme
+const { OpenAI } = require('openai');              // Für Whisper-Transkription und Chat
+const axios = require('axios');                    // Zum Herunterladen der Aufnahme
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -51,7 +51,7 @@ async function getTopicFromGPT(transcript) {
     });
     return res.choices[0].message.content.trim();
   } catch (err) {
-    console.error('❌ GPT-Themen-Tagging-Fehler:', err.message);
+    console.error('❌ Themen-Tagging fehlgeschlagen:', err);
     return 'Allgemeine Anfrage';
   }
 }
@@ -69,7 +69,11 @@ app.post('/voice', (req, res) => {
   response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.'
   );
+
+  // Einmaliger Piepton
   response.play('/assets/beep-125033.mp3');
+
+  // Gather
   response.gather({
     input: 'speech',
     language: 'de-DE',
@@ -84,7 +88,7 @@ app.post('/voice', (req, res) => {
   res.type('text/xml').send(response.toString());
 });
 
-// 2. /gather: Auswertung & ggf. Whisper-Fallback + Themen-Tagging
+// 2. /gather: Auswertung & ggf. Whisper-Fallback
 app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
@@ -97,12 +101,12 @@ app.post('/gather', async (req, res) => {
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
   convo.push({ role: 'user', content: transcript });
 
-  // Schritt 5: Thema per GPT erkennen
-  let topic = await getTopicFromGPT(transcript);
+  // Schritt 5: Thema taggen
+  const topic = await getTopicFromGPT(transcript);
   convo.push({ role: 'system', content: `Thema: ${topic}` });
   console.log(`🏷️ Thema erkannt: ${topic}`);
 
-  // Auf Wiederhören → Protokoll senden
+  // Auf Wiederhören → Protokoll-Mail
   if (/auf wiederhören/i.test(transcript)) {
     response.say('Auf Wiederhören und einen schönen Tag!').hangup();
     transporter.sendMail({
@@ -115,15 +119,14 @@ app.post('/gather', async (req, res) => {
     return res.type('text/xml').send(response.toString());
   }
 
-  // Fallback bei kurzer Eingabe → /transcribe
+  // Kurze oder unverständliche Eingabe → Whisper-Fallback
   if (!transcript || transcript.split(/\s+/).length < 2) {
-    response
-      .say('Entschuldigung, ich habe Sie nicht verstanden. Ich nehme Ihre Nachricht nun auf.')
+    response.say('Entschuldigung, ich habe Sie nicht verstanden. Bitte sprechen Sie nach dem Signalton.')
       .record({ maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe' });
     return res.type('text/xml').send(response.toString());
   }
 
-  // GPT-Chat-Antwort
+  // GPT-3.5-turbo Chat-Antwort
   let reply;
   try {
     const chatRes = await openai.chat.completions.create({
@@ -134,77 +137,50 @@ app.post('/gather', async (req, res) => {
     reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
   } catch (err) {
-    console.error('❌ GPT-Fehler:', err.message);
-    reply = 'Unsere KI ist gerade nicht erreichbar.';
+    console.error('❌ GPT-Fehler:', err);
+    reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  response
-    .say(reply)
-    .gather({
-      input: 'speech',
-      language: 'de-DE',
-      speechModel: 'phone_call_v2',
-      timeout: 60,
-      speechTimeout: 2,
-      confidenceThreshold: 0.1,
-      action: '/gather'
-    });
-
+  response.say(reply)
+    .gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
   res.type('text/xml').send(response.toString());
 });
 
-// 3. /transcribe: Whisper + GPT-Antwort + Protokoll
+// 3. /transcribe: Whisper + GPT-Antwort + Protokoll-Mail
 app.post('/transcribe', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
 
-  // Whisper-Transkription
+  // Whisper
   let transcript = '';
   try {
     const url = req.body.RecordingUrl + '.mp3';
     const buff = Buffer.from((await axios.get(url, { responseType: 'arraybuffer' })).data);
-    transcript = await openai.audio.transcriptions.create({
-      file: buff,
-      model: 'whisper-1',
-      response_format: 'text'
-    });
+    transcript = await openai.audio.transcriptions.create({ file: buff, model: 'whisper-1', response_format: 'text' });
     convo.push({ role: 'user', content: transcript });
   } catch (err) {
-    console.error('❌ Whisper-Fehler:', err.message);
+    console.error('❌ Whisper-Fehler:', err);
   }
 
-  // GPT-Chat-Antwort
+  // GPT-Antwort
   let reply = '';
   try {
-    const chatRes = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: convo,
-      max_tokens: 500
-    });
+    const chatRes = await openai.chat.completions.create({ model: 'gpt-3.5-turbo', messages: convo, max_tokens: 500 });
     reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
   } catch (err) {
-    console.error('❌ GPT-Fehler:', err.message);
+    console.error('❌ GPT-Fehler:', err);
     reply = 'Unsere KI ist gerade nicht erreichbar.';
   }
 
   response.say(reply).hangup();
-  transporter
-    .sendMail({
-      from: process.env.SMTP_FROM,
-      to: process.env.EMAIL_TO,
-      subject: `Anrufprotokoll ${callSid}`,
-      text: formatConversationLog(convo)
-    })
-    .catch(console.error);
+  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: formatConversationLog(convo) }).catch(console.error);
   delete conversations[callSid];
 
   res.type('text/xml').send(response.toString());
 });
 
-// 4. /status
+// 4. Health-Check
 app.get('/status', (req, res) => res.send('✅ Anrufbeantworter aktiv und bereit'));
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`📞 Server läuft auf Port ${PORT}`));
+app.listen(process.env.PORT || 5000, () => console.log('📞 Server läuft auf Port', process.env.PORT || 5000));
