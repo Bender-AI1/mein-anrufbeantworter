@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Call-Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style> body { font-family:sans-serif; padding:20px; } #charts { width:600px; }</style>
+</head>
+<body>
+  <h1>Anruf-Dashboard</h1>
+  <div>Total Calls: <span id="totalCalls">–</span></div>
+  <div>Avg. Duration: <span id="avgCallDuration">–</span></div>
+  <canvas id="chartTopics" width="600" height="300"></canvas>
+
+  <script>
+    async function loadStats() {
+      const res = await fetch('/api/stats');
+      const { totalCalls, avgCallDuration, topics } = await res.json();
+      document.getElementById('totalCalls').textContent = totalCalls;
+      document.getElementById('avgCallDuration').textContent = avgCallDuration;
+
+      const labels = Object.keys(topics);
+      const data = Object.values(topics);
+
+      new Chart(document.getElementById('chartTopics'), {
+        type: 'pie',
+        data: { labels, datasets: [{ data }] }
+      });
+    }
+    loadStats();
+  </script>
+</body>
+</html>
