@@ -12,7 +12,10 @@ app.use('/assets', express.static('assets'));  // Zugriff auf statische Assets w
 
 // In-Memory-Konversationen
 const conversations = {};
-const SYSTEM_PROMPT = 'Du bist ein freundlicher Kundendienst für Mein Unternehmen. Antworte immer auf Deutsch, kurz und hilfreich.';
+const SYSTEM_PROMPT =
+  'Du bist ein freundlicher Kundendienst für Mein Unternehmen. ' +
+  'Antworte **immer** auf Deutsch, nutze deutsche Datums- und Zeitangaben im 24-Stunden-Format, ' +
+  'und bleibe kurz und hilfreich.';
 
 // OpenAI-Client (Whisper + GPT-3.5-turbo)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -29,8 +32,8 @@ const transporter = nodemailer.createTransport({
 });
 
 // Hilfsfunktion: Gesprächsprotokoll als Text
-function formatConversationLog(conv) {
-  return conv
+function formatConversationLog(conv, topic) {
+  return `Thema: ${topic}\n` + conv
     .filter(msg => msg.role !== 'system')
     .map(msg => msg.role === 'user'
       ? `Kunde: ${msg.content}`
@@ -93,7 +96,7 @@ app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   if (!callSid) {
-    response.say('Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
+    response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
     response.hangup();
     return res.type('text/xml').send(response.toString());
   }
@@ -102,20 +105,21 @@ app.post('/gather', async (req, res) => {
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
   convo.push({ role: 'user', content: transcript });
 
-  // Schritt 5: Thema taggen
+  // Thema erkennen
   const topic = await getTopicFromGPT(transcript);
   convo.push({ role: 'system', content: `Thema: ${topic}` });
   console.log(`🏷️ Thema erkannt: ${topic}`);
 
   // Auf Wiederhören → Protokoll-Mail
   if (/auf wiederhören/i.test(transcript)) {
-    response.say('Auf Wiederhören und einen schönen Tag!');
+    response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
+    const logText = formatConversationLog(convo, topic);
     transporter.sendMail({
       from: process.env.SMTP_FROM,
       to: process.env.EMAIL_TO,
       subject: `Anrufprotokoll ${callSid} – Thema: ${topic}`,
-      text: formatConversationLog(convo)
+      text: logText
     }).catch(console.error);
     delete conversations[callSid];
     return res.type('text/xml').send(response.toString());
@@ -123,12 +127,13 @@ app.post('/gather', async (req, res) => {
 
   // Kurze oder unverständliche Eingabe → Whisper-Fallback
   if (!transcript || transcript.split(/\s+/).length < 2) {
-    response.say('Entschuldigung, ich habe Sie nicht verstanden. Bitte sprechen Sie nach dem Signalton.');
+    response.say({ voice: 'Polly.Vicki', language: 'de-DE' },
+      'Entschuldigung, ich habe Sie nicht verstanden. Bitte sprechen Sie nach dem Signalton.');
     response.record({ maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe' });
     return res.type('text/xml').send(response.toString());
   }
 
-  // GPT-3.5-turbo Chat-Antwort
+  // GPT-Chat-Antwort
   let reply;
   try {
     const chatRes = await openai.chat.completions.create({
@@ -138,13 +143,12 @@ app.post('/gather', async (req, res) => {
     });
     reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
-    console.log('🔹 GPT-Antwort:', reply);
   } catch (err) {
     console.error('❌ GPT-Fehler:', err);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  response.say(reply);
+  response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.gather({
     input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2',
     timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather'
@@ -159,7 +163,6 @@ app.post('/transcribe', async (req, res) => {
   const callSid = req.body.CallSid;
   const convo = conversations[callSid] || [{ role: 'system', content: SYSTEM_PROMPT }];
 
-  // Whisper
   let transcript = '';
   try {
     const url = req.body.RecordingUrl + '.mp3';
@@ -171,7 +174,6 @@ app.post('/transcribe', async (req, res) => {
     console.error('❌ Whisper-Fehler:', err);
   }
 
-  // GPT-Antwort
   let reply = '';
   try {
     const chatRes = await openai.chat.completions.create({ model: 'gpt-3.5-turbo', messages: convo, max_tokens: 500 });
@@ -182,13 +184,13 @@ app.post('/transcribe', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar.';
   }
 
-  response.say(reply);
+  response.say({ voice: 'Polly.Vicki', language: 'de-DE' }, reply);
   response.hangup();
   transporter.sendMail({
     from: process.env.SMTP_FROM,
     to: process.env.EMAIL_TO,
     subject: `Anrufprotokoll ${callSid}`,
-    text: formatConversationLog(convo)
+    text: formatConversationLog(convo, convo.find(m => m.role==='system' && m.content.startsWith('Thema:')).content.replace('Thema: ','') )
   }).catch(console.error);
   delete conversations[callSid];
 
