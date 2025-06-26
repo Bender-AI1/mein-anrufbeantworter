@@ -93,7 +93,8 @@ app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   if (!callSid) {
-    response.say('Ein interner Fehler ist aufgetreten. Auf Wiederhören!').hangup();
+    response.say('Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
+    response.hangup();
     return res.type('text/xml').send(response.toString());
   }
 
@@ -108,7 +109,8 @@ app.post('/gather', async (req, res) => {
 
   // Auf Wiederhören → Protokoll-Mail
   if (/auf wiederhören/i.test(transcript)) {
-    response.say('Auf Wiederhören und einen schönen Tag!').hangup();
+    response.say('Auf Wiederhören und einen schönen Tag!');
+    response.hangup();
     transporter.sendMail({
       from: process.env.SMTP_FROM,
       to: process.env.EMAIL_TO,
@@ -121,8 +123,8 @@ app.post('/gather', async (req, res) => {
 
   // Kurze oder unverständliche Eingabe → Whisper-Fallback
   if (!transcript || transcript.split(/\s+/).length < 2) {
-    response.say('Entschuldigung, ich habe Sie nicht verstanden. Bitte sprechen Sie nach dem Signalton.')
-      .record({ maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe' });
+    response.say('Entschuldigung, ich habe Sie nicht verstanden. Bitte sprechen Sie nach dem Signalton.');
+    response.record({ maxLength: 60, playBeep: true, trim: 'trim-silence', action: '/transcribe' });
     return res.type('text/xml').send(response.toString());
   }
 
@@ -136,13 +138,18 @@ app.post('/gather', async (req, res) => {
     });
     reply = chatRes.choices[0].message.content;
     convo.push({ role: 'assistant', content: reply });
+    console.log('🔹 GPT-Antwort:', reply);
   } catch (err) {
     console.error('❌ GPT-Fehler:', err);
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  response.say(reply)
-    .gather({ input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2', timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather' });
+  response.say(reply);
+  response.gather({
+    input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2',
+    timeout: 60, speechTimeout: 2, confidenceThreshold: 0.1, action: '/gather'
+  });
+
   res.type('text/xml').send(response.toString());
 });
 
@@ -159,6 +166,7 @@ app.post('/transcribe', async (req, res) => {
     const buff = Buffer.from((await axios.get(url, { responseType: 'arraybuffer' })).data);
     transcript = await openai.audio.transcriptions.create({ file: buff, model: 'whisper-1', response_format: 'text' });
     convo.push({ role: 'user', content: transcript });
+    console.log('📝 Whisper-Transkript:', transcript);
   } catch (err) {
     console.error('❌ Whisper-Fehler:', err);
   }
@@ -174,8 +182,14 @@ app.post('/transcribe', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar.';
   }
 
-  response.say(reply).hangup();
-  transporter.sendMail({ from: process.env.SMTP_FROM, to: process.env.EMAIL_TO, subject: `Anrufprotokoll ${callSid}`, text: formatConversationLog(convo) }).catch(console.error);
+  response.say(reply);
+  response.hangup();
+  transporter.sendMail({
+    from: process.env.SMTP_FROM,
+    to: process.env.EMAIL_TO,
+    subject: `Anrufprotokoll ${callSid}`,
+    text: formatConversationLog(convo)
+  }).catch(console.error);
   delete conversations[callSid];
 
   res.type('text/xml').send(response.toString());
