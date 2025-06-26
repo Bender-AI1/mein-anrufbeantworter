@@ -212,7 +212,7 @@ app.post('/transcribe', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar.';
   }
 
-  response.say({ voice:'Polly.Hans', language:'de-DE' }, reply);
+  response.say({ voice:'Polly.Marlene', language:'de-DE' }, reply);
   response.hangup();
 
   // Abschließende Mail
