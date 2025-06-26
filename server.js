@@ -74,10 +74,10 @@ app.post('/voice', (req, res) => {
     topics: []
   };
 
-  response.say({ voice:'Polly.Hans', language:'de-DE' },
+  response.say({ voice:'Polly.Marlene', language:'de-DE' },
     'Dieses Gespräch wird aufgezeichnet und verarbeitet. Ihre Daten werden vertraulich behandelt.');
   response.pause({ length:1 });
-  response.say({ voice:'Polly.Hans', language:'de-DE' },
+  response.say({ voice:'Polly.Marlene', language:'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.');
 
   // Einmaliger Piepton
@@ -99,7 +99,7 @@ app.post('/gather', async (req, res) => {
   const response = new VoiceResponse();
   const callSid = req.body.CallSid;
   if (!callSid || !conversations[callSid]) {
-    response.say({ voice:'Polly.Hans', language:'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
+    response.say({ voice:'Polly.Marlene', language:'de-DE' }, 'Ein interner Fehler ist aufgetreten. Auf Wiederhören!');
     response.hangup();
     return res.type('text/xml').send(response.toString());
   }
@@ -118,7 +118,7 @@ app.post('/gather', async (req, res) => {
   // Auf Wiederhören → Gespräch beenden und Mail mit häufigstem Thema
   if (/auf wiederhören/i.test(transcript)) {
     const topTopic = mostFrequent(topics);
-    response.say({ voice:'Polly.Hans', language:'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
+    response.say({ voice:'Polly.Marlene', language:'de-DE' }, 'Auf Wiederhören und einen schönen Tag!');
     response.hangup();
     transporter.sendMail({
       from: process.env.SMTP_FROM,
@@ -132,7 +132,7 @@ app.post('/gather', async (req, res) => {
 
   // Fallback bei Kurznachricht → Whisper-Fallback
   if (!transcript || transcript.split(/\s+/).length < 2) {
-    response.say({ voice:'Polly.Hans', language:'de-DE' },
+    response.say({ voice:'Polly.Marlene', language:'de-DE' },
       'Entschuldigung, ich habe Sie nicht verstanden. Bitte sprechen Sie nach dem Signalton.');
     response.record({
       maxLength:60, playBeep:true, trim:'trim-silence',
@@ -157,7 +157,7 @@ app.post('/gather', async (req, res) => {
     reply = 'Unsere KI ist gerade nicht erreichbar. Bitte versuchen Sie es später.';
   }
 
-  response.say({ voice:'Polly.Hans', language:'de-DE' }, reply);
+  response.say({ voice:'Polly.Marlene', language:'de-DE' }, reply);
   response.gather({
     input:'speech', language:'de-DE', speechModel:'phone_call_v2',
     timeout:60, speechTimeout:2, confidenceThreshold:0.1,
