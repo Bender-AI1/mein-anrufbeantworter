@@ -1,0 +1,75 @@
+/* --- Charts.css --- */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #f5ece0;
+  font-family: sans-serif;
+}
+
+.charts-container {
+  display: flex;
+  align-items: center;      /* vertikal zentrieren */
+  justify-content: center;  /* horizontal zentrieren */
+  height: 85vh;            /* volle Höhe des Viewports */
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.charts-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  max-width: 1024px;
+}
+
+.chart-card {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  padding: 16px;
+  width: 300px;
+  text-align: center;
+}
+
+.chart-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+  max-width: 320px;
+}
+
+.modal h3 {
+  margin-top: 0;
+  color: #4e79a7;
+}
+
+.modal ul {
+  list-style: none;
+  padding: 0;
+}
+
+.modal a {
+  color: #4e79a7;
+  text-decoration: none;
+}
+
+.modal a:hover {
+  text-decoration: underline;
+}
