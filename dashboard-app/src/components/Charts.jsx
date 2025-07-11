@@ -1,61 +1,65 @@
-import React, { useState } from 'react'
+// src/components/Charts.jsx
+import React, { useState, useEffect } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as BarTooltip, Cell,
   PieChart, Pie, Tooltip as PieTooltip
 } from 'recharts'
 import './Charts.css'
 
-const EXAMPLE_DATA = [
-  { id: 1, caller: '0123456789', time: new Date('2025-07-08T09:15:00'), duration: 4, topic: 'Technik' },
-  { id: 2, caller: '0987654321', time: new Date('2025-07-08T09:45:00'), duration: 10, topic: 'Vertrieb' },
-  { id: 3, caller: '01711223344', time: new Date('2025-07-08T10:05:00'), duration: 2, topic: 'Support' },
-  { id: 4, caller: '01551234567', time: new Date('2025-07-08T10:30:00'), duration: 7, topic: 'Technik' },
-  { id: 5, caller: '01667894521', time: new Date('2025-07-08T11:00:00'), duration: 5, topic: 'Support' },
-]
-
-// gruppieren nach Stunde
-function getByHour(data) {
-  const map = {}
-  data.forEach(({ caller, time }) => {
-    const h = time.getHours().toString().padStart(2, '0') + ':00'
-    map[h] = map[h] || []
-    map[h].push(caller)
-  })
-  return Object.entries(map).map(([hour, callers]) => ({ hour, count: callers.length, callers }))
-}
-
-// gruppieren nach Dauer (Minuten)
-function getByDuration(data) {
-  const map = {}
-  data.forEach(({ caller, duration }) => {
-    const m = Math.floor(duration).toString() + ' min'
-    map[m] = map[m] || []
-    map[m].push(caller)
-  })
-  return Object.entries(map).map(([duration, callers]) => ({ duration, count: callers.length, callers }))
-}
-
-// gruppieren nach Topic
-function getByTopic(data) {
-  const map = {}
-  data.forEach(({ caller, topic }) => {
-    map[topic] = map[topic] || []
-    map[topic].push(caller)
-  })
-  return Object.entries(map).map(([topic, callers]) => ({ topic, count: callers.length, callers }))
-}
-
 export default function Charts({ periodDays }) {
   const [modal, setModal] = useState({ open: false, title: '', callers: [] })
+  const [data, setData] = useState([])
 
-    // ← HIER den Zeitraum-Filter anwenden
-  const cutoff = new Date()
-  cutoff.setDate(cutoff.getDate() - periodDays + 1)
-  const filtered = EXAMPLE_DATA.filter(({ time }) => time >= cutoff)
-  
-  const hourData     = getByHour(EXAMPLE_DATA)
-  const durationData = getByDuration(EXAMPLE_DATA)
-  const topicData    = getByTopic(EXAMPLE_DATA)
+  // 1) Beim Mounten (oder bei Änderung von periodDays) aus deiner API laden
+  useEffect(() => {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - periodDays + 1)
+    fetch(`https://DEIN-SERVER.onrender.com/api/calls?from=${cutoff.toISOString()}`)
+      .then(res => res.json())
+      .then(json => {
+        // API liefert Array mit { id, caller, time, duration, topic }
+        // Zeitstring in Date-Objekt umwandeln
+        const parsed = json.map(item => ({
+          ...item,
+          time: new Date(item.time)
+        }))
+        setData(parsed)
+      })
+      .catch(err => console.error('Daten-Ladefehler:', err))
+  }, [periodDays])
+
+  // Gruppierungsfunktionen
+  function getByHour(arr) {
+    const map = {}
+    arr.forEach(({ caller, time }) => {
+      const h = time.getHours().toString().padStart(2, '0') + ':00'
+      map[h] = map[h] || []
+      map[h].push(caller)
+    })
+    return Object.entries(map).map(([hour, callers]) => ({ hour, count: callers.length, callers }))
+  }
+  function getByDuration(arr) {
+    const map = {}
+    arr.forEach(({ caller, duration }) => {
+      const m = Math.floor(duration).toString() + ' min'
+      map[m] = map[m] || []
+      map[m].push(caller)
+    })
+    return Object.entries(map).map(([duration, callers]) => ({ duration, count: callers.length, callers }))
+  }
+  function getByTopic(arr) {
+    const map = {}
+    arr.forEach(({ caller, topic }) => {
+      map[topic] = map[topic] || []
+      map[topic].push(caller)
+    })
+    return Object.entries(map).map(([topic, callers]) => ({ topic, count: callers.length, callers }))
+  }
+
+  // Daten für die Charts
+  const hourData     = getByHour(data)
+  const durationData = getByDuration(data)
+  const topicData    = getByTopic(data)
 
   // ursprüngliche Palette
   const COLORS = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f']
@@ -124,7 +128,8 @@ export default function Charts({ periodDays }) {
                 <li key={phone}>
                   <a
                     href={`mailto:DEINE_EMAIL@gmail.com?subject=Rückruf%20${encodeURIComponent(phone)}`}
-                    target="_blank" rel="noopener noreferrer"
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
                     {phone}
                   </a>
