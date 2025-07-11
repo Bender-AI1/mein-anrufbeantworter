@@ -1,12 +1,15 @@
-import React, { useState } from 'react'
+// src/App.jsx
+import React, { useState, useEffect } from 'react'
 import Charts from './components/Charts'
 import './App.css'
 
 export default function App() {
-  // Einfach Strings, kein <'menu'|'dashboard'>
+  // Basis-URL deiner API – lokal oder gehostet
+  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000'
+
   const [view, setView] = useState('menu')
-  // Einfach null als Startwert
   const [period, setPeriod] = useState(null)
+  const [today, setToday] = useState(new Date())
 
   const periods = [
     { label: 'Täglich',    days: 1 },
@@ -15,21 +18,32 @@ export default function App() {
     { label: 'Jährlich',    days: 365 },
   ]
 
-  const today = new Date()
-  // Wenn period gesetzt ist, berechne den Starttermin
+  // Setze das "heutige" Datum beim Mount, damit es sich während der Session nicht verschiebt
+  useEffect(() => {
+    setToday(new Date())
+  }, [])
+
+  // Berechne Startdatum basierend auf period.days
   const start = period
-    ? new Date(today.getFullYear(),
-               today.getMonth(),
-               today.getDate() - (period.days - 1))
+    ? new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate() - (period.days - 1)
+      )
     : null
 
-  // Formatierungsfunktion ganz normal ohne : Date
   const formatDate = d =>
     d.toLocaleDateString('de-DE', {
       day:   '2-digit',
       month: '2-digit',
       year:  'numeric'
     })
+
+  const handleSelectPeriod = p => {
+    setPeriod(p)
+    setToday(new Date())
+    setView('dashboard')
+  }
 
   return (
     <div className="app-container">
@@ -40,10 +54,7 @@ export default function App() {
             {periods.map(p => (
               <button
                 key={p.label}
-                onClick={() => {
-                  setPeriod(p)
-                  setView('dashboard')
-                }}
+                onClick={() => handleSelectPeriod(p)}
               >
                 {p.label}
               </button>
@@ -65,9 +76,10 @@ export default function App() {
               {start && formatDate(start)} – {formatDate(today)}
             </div>
           </header>
+
           <main className="charts-container">
-            {/* Übergib period.days an Deine Charts */}
-            <Charts periodDays={period.days} />
+            {/* API_BASE und period.days an Charts übergeben */}
+            <Charts apiBase={API_BASE} periodDays={period.days} />
           </main>
         </>
       )}

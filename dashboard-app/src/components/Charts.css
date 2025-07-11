@@ -1,47 +1,75 @@
-body {
+/* --- Charts.css --- */
+html, body, #root {
+  height: 100%;
   margin: 0;
-  min-height: 100vh;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background: beige;
+  padding: 0;
+  background-color: #f5ece0;
   font-family: sans-serif;
 }
 
 .charts-container {
-  background: #fff;
-  padding: 24px;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;      /* vertikal zentrieren */
+  justify-content: center;  /* horizontal zentrieren */
+  height: 85vh;            /* volle Höhe des Viewports */
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .charts-row {
   display: flex;
-  gap: 16px;
+  gap: 24px;
+  flex-wrap: wrap;
+  max-width: 1024px;
 }
 
 .chart-card {
-  flex: 1;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  padding: 16px;
+  width: 300px;
   text-align: center;
+}
+
+.chart-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  color: #333;
 }
 
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.3);
+  inset: 0;
+  background: rgba(0,0,0,0.4);
   display: flex;
-  justify-content: center;
   align-items: center;
-  z-index: 10;
+  justify-content: center;
 }
 
 .modal {
   background: #fff;
-  padding: 16px;
   border-radius: 8px;
-  max-width: 90%;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  padding: 20px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+  max-width: 320px;
+}
+
+.modal h3 {
+  margin-top: 0;
+  color: #4e79a7;
+}
+
+.modal ul {
+  list-style: none;
+  padding: 0;
+}
+
+.modal a {
+  color: #4e79a7;
+  text-decoration: none;
+}
+
+.modal a:hover {
+  text-decoration: underline;
 }
