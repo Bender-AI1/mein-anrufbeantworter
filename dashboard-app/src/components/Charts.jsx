@@ -1,4 +1,3 @@
-// src/components/Charts.jsx
 import React, { useState, useEffect } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as BarTooltip, Cell,
@@ -10,15 +9,14 @@ export default function Charts({ periodDays }) {
   const [modal, setModal] = useState({ open: false, title: '', callers: [] })
   const [data, setData] = useState([])
 
-  // 1) Beim Mounten (oder bei Änderung von periodDays) aus deiner API laden
+  // 1) Daten nach periodDays von der API laden
   useEffect(() => {
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - periodDays + 1)
-    fetch(`https://DEIN-SERVER.onrender.com/api/calls?from=${cutoff.toISOString()}`)
+
+    fetch(`https://dashboard-app-puxw.onrender.com/api/calls?from=${cutoff.toISOString()}`)
       .then(res => res.json())
       .then(json => {
-        // API liefert Array mit { id, caller, time, duration, topic }
-        // Zeitstring in Date-Objekt umwandeln
         const parsed = json.map(item => ({
           ...item,
           time: new Date(item.time)
@@ -61,7 +59,7 @@ export default function Charts({ periodDays }) {
   const durationData = getByDuration(data)
   const topicData    = getByTopic(data)
 
-  // ursprüngliche Palette
+  // Palette
   const COLORS = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f']
 
   const openModal  = (title, callers) => setModal({ open: true, title, callers })
@@ -127,7 +125,7 @@ export default function Charts({ periodDays }) {
               {modal.callers.map(phone => (
                 <li key={phone}>
                   <a
-                    href={`mailto:DEINE_EMAIL@gmail.com?subject=Rückruf%20${encodeURIComponent(phone)}`}
+                    href={`mailto:bender.serviceai@gmail.com?subject=Rückruf%20${encodeURIComponent(phone)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
