@@ -115,7 +115,7 @@ app.post('/voice', (req, res) => {
   response.pause({ length: 1 });
   response.say({ voice: 'Polly.Marlene', language: 'de-DE' },
     'Bitte stellen Sie Ihre Frage nach dem Signalton. Sagen Sie Auf Wiederhören, um das Gespräch zu beenden.');
-  response.play('/assets/beep-125033.mp3');
+  response.play('https://mein-anrufbeantworter.onrender.com/assets/beep-125033.mp3');
   response.gather({
     input: 'speech', language: 'de-DE', speechModel: 'phone_call_v2',
     hints: 'Öffnungszeiten, Preise, Termin, Support',

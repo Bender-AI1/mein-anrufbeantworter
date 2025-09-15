@@ -37,6 +37,7 @@ export default function Charts({ apiBase, periodDays }) {
   function getByHour(arr) {
     const map = {}
     arr.forEach(({ caller, time }) => {
+      if (!time || isNaN(time)) return
       const h = time.getHours().toString().padStart(2, '0') + ':00'
       map[h] = map[h] || []
       map[h].push(caller)
@@ -65,9 +66,34 @@ export default function Charts({ apiBase, periodDays }) {
     return Object.entries(map).map(([topic, callers]) => ({ topic, count: callers.length, callers }))
   }
 
+  // NEW: Group by calendar date (YYYY-MM-DD) for weekly/monthly/yearly
+  function getByDate(arr) {
+    const map = {}
+    arr.forEach(({ caller, time }) => {
+      if (!time || isNaN(time)) return
+      const y = time.getFullYear()
+      const m = String(time.getMonth() + 1).padStart(2, '0')
+      const d = String(time.getDate()).padStart(2, '0')
+      const key = `${y}-${m}-${d}` // stable sort key
+      map[key] = map[key] || []
+      map[key].push(caller)
+    })
+    // newest date first
+    return Object.entries(map)
+      .map(([dateKey, callers]) => ({ dateKey, count: callers.length, callers }))
+      .sort((a, b) => b.dateKey.localeCompare(a.dateKey))
+  }
+  const formatDE = (ymd) => {
+    const [y, m, d] = ymd.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('de-DE', {
+      day: '2-digit', month: '2-digit', year: 'numeric'
+    })
+  }
+
   const hourData     = getByHour(data)
   const durationData = getByDuration(data)
   const topicData    = getByTopic(data)
+  const dateData     = getByDate(data)
 
   const COLORS = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f']
 
@@ -123,6 +149,40 @@ export default function Charts({ apiBase, periodDays }) {
             </PieChart>
           </div>
         </div>
+
+        {/* NEW: Anrufe pro Datum (nur für >1 Tag) */}
+        {periodDays > 1 && (
+          <div className="chart-card" style={{ marginTop: 12 }}>
+            <h2>Anrufe pro Datum</h2>
+            {dateData.length === 0 ? (
+              <p>Keine Daten im gewählten Zeitraum.</p>
+            ) : (
+              <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid #eee' }}>Datum</th>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid #eee' }}>Anzahl</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dateData.map(row => (
+                    <tr
+                      key={row.dateKey}
+                      onClick={() => openModal(`Datum ${formatDE(row.dateKey)}`, row.callers)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #f2f2f2' }}>{formatDE(row.dateKey)}</td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #f2f2f2' }}>{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+              Tipp: Eine Zeile anklicken, um die zugehörigen Rufnummern im Modal zu sehen.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Modal */}
