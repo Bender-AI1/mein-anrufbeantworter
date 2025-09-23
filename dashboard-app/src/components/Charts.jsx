@@ -33,56 +33,72 @@ export default function Charts({ apiBase, periodDays }) {
     }
   }, [apiBase, periodDays])
 
-  // Group by hour
+  // Group by hour (jetzt: caller & id)
   function getByHour(arr) {
     const map = {}
-    arr.forEach(({ caller, time }) => {
+    arr.forEach(({ id, caller, time }) => {
       if (!time || isNaN(time)) return
       const h = time.getHours().toString().padStart(2, '0') + ':00'
       map[h] = map[h] || []
-      map[h].push(caller)
+      map[h].push({ caller, id })
     })
-    return Object.entries(map).map(([hour, callers]) => ({ hour, count: callers.length, callers }))
+    return Object.entries(map).map(([hour, calls]) => ({
+      hour,
+      count: calls.length,
+      callers: calls
+    }))
   }
 
   // Group by duration
   function getByDuration(arr) {
     const map = {}
-    arr.forEach(({ caller, duration }) => {
+    arr.forEach(({ id, caller, duration }) => {
       const m = Math.floor(duration).toString() + ' min'
       map[m] = map[m] || []
-      map[m].push(caller)
+      map[m].push({ caller, id })
     })
-    return Object.entries(map).map(([duration, callers]) => ({ duration, count: callers.length, callers }))
+    return Object.entries(map).map(([duration, calls]) => ({
+      duration,
+      count: calls.length,
+      callers: calls
+    }))
   }
 
   // Group by topic
   function getByTopic(arr) {
     const map = {}
-    arr.forEach(({ caller, topic }) => {
+    arr.forEach(({ id, caller, topic }) => {
       map[topic] = map[topic] || []
-      map[topic].push(caller)
+      map[topic].push({ caller, id })
     })
-    return Object.entries(map).map(([topic, callers]) => ({ topic, count: callers.length, callers }))
+    return Object.entries(map).map(([topic, calls]) => ({
+      topic,
+      count: calls.length,
+      callers: calls
+    }))
   }
 
-  // NEW: Group by calendar date (YYYY-MM-DD) for weekly/monthly/yearly
+  // Group by date
   function getByDate(arr) {
     const map = {}
-    arr.forEach(({ caller, time }) => {
+    arr.forEach(({ id, caller, time }) => {
       if (!time || isNaN(time)) return
       const y = time.getFullYear()
       const m = String(time.getMonth() + 1).padStart(2, '0')
       const d = String(time.getDate()).padStart(2, '0')
-      const key = `${y}-${m}-${d}` // stable sort key
+      const key = `${y}-${m}-${d}`
       map[key] = map[key] || []
-      map[key].push(caller)
+      map[key].push({ caller, id })
     })
-    // newest date first
     return Object.entries(map)
-      .map(([dateKey, callers]) => ({ dateKey, count: callers.length, callers }))
+      .map(([dateKey, calls]) => ({
+        dateKey,
+        count: calls.length,
+        callers: calls
+      }))
       .sort((a, b) => b.dateKey.localeCompare(a.dateKey))
   }
+
   const formatDE = (ymd) => {
     const [y, m, d] = ymd.split('-').map(Number)
     return new Date(y, m - 1, d).toLocaleDateString('de-DE', {
@@ -104,7 +120,7 @@ export default function Charts({ apiBase, periodDays }) {
     <>
       <div className="charts-container">
         <div className="charts-row">
-          {/* Anrufzeitpunkt */}
+          {/* Anrufzeitpunkt (Stunde) */}
           <div className="chart-card">
             <h2>Anrufzeitpunkt (Stunde)</h2>
             <BarChart width={280} height={180} data={hourData}>
@@ -117,7 +133,7 @@ export default function Charts({ apiBase, periodDays }) {
             </BarChart>
           </div>
 
-          {/* Gesprächsdauer */}
+          {/* Gesprächsdauer (Min.) */}
           <div className="chart-card">
             <h2>Gesprächsdauer (Min.)</h2>
             <BarChart width={280} height={180} data={durationData}>
@@ -150,7 +166,7 @@ export default function Charts({ apiBase, periodDays }) {
           </div>
         </div>
 
-        {/* NEW: Anrufe pro Datum (nur für >1 Tag) */}
+        {/* Anrufe pro Datum (nur für >1 Tag) */}
         {periodDays > 1 && (
           <div className="chart-card" style={{ marginTop: 12 }}>
             <h2>Anrufe pro Datum</h2>
@@ -191,14 +207,14 @@ export default function Charts({ apiBase, periodDays }) {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>{modal.title}</h3>
             <ul>
-              {modal.callers.map(phone => (
-                <li key={phone}>
+              {modal.callers.map(({ caller, id }) => (
+                <li key={id}>
                   <a
-                    href={`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(phone)}`}
+                    href={`https://mail.google.com/mail/u/0/#search/${encodeURIComponent('subject:Anrufprotokoll ' + id)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    {phone}
+                    {caller}
                   </a>
                 </li>
               ))}
