@@ -194,7 +194,7 @@ export default function Charts({ apiBase, periodDays }) {
               {modal.callers.map(phone => (
                 <li key={phone}>
                   <a
-                    href={`mailto:bender.serviceai@gmail.com?subject=Rückruf%20${encodeURIComponent(phone)}`}
+                    href={`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(phone)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
