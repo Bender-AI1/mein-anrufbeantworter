@@ -91,8 +91,10 @@ function mostFrequent(arr) {
 // ─── API-Endpoint für Dashboard ─────────────────────────────────────────────────
 app.get('/api/calls', (req, res) => {
   const days = parseInt(req.query.days) || 1;
+  // Berechne den Cutoff auf Mitternacht, damit "Täglich" den ganzen Tag umfasst.
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days + 1);
+  cutoff.setHours(0, 0, 0, 0);
   const filtered = callRecords.filter(r => new Date(r.time) >= cutoff);
   res.json(filtered);
 });
@@ -196,7 +198,14 @@ app.post('/transcribe', async (req, res) => {
 
   // Whisper-Transkription
   let transcript = '';
-  try { const url = req.body.RecordingUrl + '.mp3'; const buff = Buffer.from((await axios.get(url, { responseType: 'arraybuffer' })).data); transcript = await openai.audio.transcriptions.create({ file: buff, model: 'whisper-1' }); messages.push({ role: 'user', content: transcript }); } catch(e) { console.error('Whisper-Fehler:', e); }
+  try {
+    const url = req.body.RecordingUrl + '.mp3';
+    const buff = Buffer.from((await axios.get(url, { responseType: 'arraybuffer' })).data);
+    transcript = await openai.audio.transcriptions.create({ file: buff, model: 'whisper-1' });
+    messages.push({ role: 'user', content: transcript });
+  } catch(e) {
+    console.error('Whisper-Fehler:', e);
+  }
 
   const topic = await getTopicFromGPT(transcript);
   topics.push(topic);
@@ -204,7 +213,12 @@ app.post('/transcribe', async (req, res) => {
 
   // GPT-Antwort
   let reply = '';
-  try { const chatRes = await openai.chat.completions.create({ model: 'gpt-3.5-turbo', messages, max_tokens: 500 }); reply = chatRes.choices[0].message.content.trim(); } catch { reply = 'Unsere KI ist gerade nicht erreichbar.'; }
+  try {
+    const chatRes = await openai.chat.completions.create({ model: 'gpt-3.5-turbo', messages, max_tokens: 500 });
+    reply = chatRes.choices[0].message.content.trim();
+  } catch {
+    reply = 'Unsere KI ist gerade nicht erreichbar.';
+  }
 
   // Call-Log speichern & Mail
   const durationMin = Math.round((new Date() - startTime) / 60000);
